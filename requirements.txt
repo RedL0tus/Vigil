@@ -1,0 +1,5 @@
+ujson
+pyyaml
+uvloop
+aiogram
+apscheduler
