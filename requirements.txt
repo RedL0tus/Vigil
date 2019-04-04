@@ -1,5 +1,8 @@
+pytz
 ujson
 pyyaml
 uvloop
 aiogram
+trafaret
 apscheduler
+trafaret_config

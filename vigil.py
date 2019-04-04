@@ -2,25 +2,35 @@
 # -*- encoding: utf-8 -*-
 
 import os
+import pytz
 import yaml
 import logging
 
-from datetime import datetime
 from aiogram import Bot, Dispatcher, executor, types
+from datetime import datetime
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-ADMINS = [
-    124616797
-]
-
-TOKEN = '815268806:AAEPiFvmhOBFwlBkCNY-RxGB7LB_klly0XA'
+CONFIG_PATH = 'config.yaml'
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class VigilStrings(object):
+    ID_INVALID: str = '{id} 为无效 ID'
+    ADMIN_ADDED: str = '{id} 已被设为管理员'
     ENABLED: str = '已在本群组启用'
     DISABLED: str = '已在本群组禁用'
+    GROUP_STATUS: str = '''\
+    群组 ID： {id}
+    是否启用： {enabled}
+    时区： {timezone}
+    是否启用标题自动更新： {title_enabled}
+    标题模板： {title_template}
+    '''  # 格式化歪打正着
+    TIMEZONE_CURRENT: str = '当前时区为 {timezone}'
+    TIMEZONE_INVALID: str = '无效的时区'
+    TIMEZONE_UPDATED: str = '时区已更新至 {timezone}'
     ADMIN_REQUIRED: str = '需要管理员权限'
     TITLE_ENABLED: str = '已启用自动修改群标题'
     TITLE_DISABLED: str = '已禁用自动修改群标题'
@@ -49,18 +59,22 @@ class VigilGroup(yaml.YAMLObject):
 
 class VigilBot(object):
     def __init__(self, token: str, admins: list, data_path: str = 'data.yaml'):
-        self.id: int = int(TOKEN.split(':', maxsplit=1)[0])
+        self.id: int = int(token.split(':', maxsplit=1)[0])
         self.bot: Bot = Bot(token=token)
         self.dispatcher: Dispatcher = Dispatcher(self.bot)
+        self.scheduler: AsyncIOScheduler = AsyncIOScheduler()
         self.strings = VigilStrings()
         self.data_path: str = data_path
-        self.admins = admins
         self.data: dict = dict()
         self.load_data()
         if not self.data:
             self.data = dict()
         if 'groups' not in self.data.keys():
             self.data['groups']: dict = dict()
+        if 'admins' not in self.data.keys():
+            self.data['admins']: list = list()
+        self.data['admins']: list = list(set(self.data['admins'] + admins))
+        self.dump_data()
 
     def load_data(self):
         if os.path.isfile(self.data_path):
@@ -91,24 +105,61 @@ class VigilBot(object):
             logger.info('Group with ID "%s" has been updated' % group.id)
             self.dump_data()
 
-    async def is_admin(self, group: VigilGroup):
+    async def is_admin(self, group: VigilGroup) -> bool:
         bot: types.ChatMember = await self.bot.get_chat_member(group.id, self.id)
         return bot.is_admin()
 
-    async def is_valid(self, group: VigilGroup, message: types.Message):
+    async def is_valid(self, group: VigilGroup, message: types.Message) -> bool:
         if not group:
             return False
         member: types.ChatMember = await self.bot.get_chat_member(group.id, message.from_user.id)
         return member.is_admin()
 
+    async def update_title(self, group: VigilGroup):
+        if group.title_enabled:
+            if not await self.is_admin(group):
+                group.title_enabled = False
+                self.update_group(group)
+                return
+            timezone: pytz.timezone = pytz.timezone(group.timezone)
+            localtime: datetime = datetime.utcnow().astimezone(timezone)
+            await self.bot.set_chat_title(
+                group.id,
+                group.title_template.format(
+                    yeshu_year=int(localtime.year - 1988),
+                    day=int(localtime.timetuple().tm_yday)
+                )
+            )
+            logger.info('Title updated for group with ID "%s"' % group.id)
+
+    async def update_title_all(self):
+        for group in self.data['groups'].values():
+            await self.update_title(group)
+        logger.info('All titles have been updated')
+
+    async def handler_add_admin(self, message: types.Message):
+        if message.from_user.id in self.data['admins']:
+            ids = message.text.split(' ')[1:]
+            response: str = ''
+            for single_id in ids:
+                try:
+                    if single_id not in self.data['admins']:
+                        self.data['admins'].append(int(single_id))
+                        self.dump_data()
+                    response += str(self.strings.ADMIN_ADDED.format(id=str(single_id)) + '\n')
+                except ValueError:
+                    response += str(self.strings.ID_INVALID.format(id=str(single_id)) + '\n')
+                    continue
+            await message.reply(response)
+
     async def handler_add_group(self, message: types.Message):
-        if message.from_user.id in self.admins:
+        if message.from_user.id in self.data['admins']:
             group_id: int = int(message.text.split(' ', maxsplit=1)[1])
             self.add_group(group_id)
 
     async def handler_enable(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if (not group) and (message.from_user.id in self.admins):
+        if (not group) and (message.from_user.id in self.data['admins']):
             self.add_group(message.chat.id)
             group: VigilGroup = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
@@ -127,6 +178,34 @@ class VigilBot(object):
                 logger.info('Bot disabled for group with ID "%s"' % group.id)
             await message.reply(self.strings.DISABLED)
 
+    async def handler_group_status(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group:
+            response: str = self.strings.GROUP_STATUS.format(
+                id=str(group.id),
+                enabled='是' if group.enabled else '否',
+                timezone=str(group.timezone),
+                title_enabled='是' if group.title_enabled else '否',
+                title_template=str(group.title_template)
+            )
+            await message.reply(response)
+
+    async def current_timezone(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group:
+            await message.reply(self.strings.TIMEZONE_CURRENT.format(timezone=group.timezone))
+
+    async def handler_update_timezone(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and (await self.is_valid(group, message)):
+            timezone: str = str(message.text.split(' ', maxsplit=1)[1])
+            if timezone not in pytz.all_timezones:
+                await message.reply(self.strings.TIMEZONE_INVALID)
+            group.timezone = timezone
+            self.update_group(group)
+            await self.update_title(group)
+            await message.reply(self.strings.TIMEZONE_UPDATED.format(timezone=timezone))
+
     async def handler_enable_title_update(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
@@ -138,6 +217,7 @@ class VigilBot(object):
             if not group.title_enabled:
                 group.title_enabled = True
                 self.update_group(group)
+            await self.update_title(group)
             await message.reply(self.strings.TITLE_ENABLED)
 
     async def handler_disable_title_update(self, message: types.Message):
@@ -155,6 +235,7 @@ class VigilBot(object):
             if template != group.title_template:
                 group.title_template = template
                 self.update_group(group)
+            await self.update_title(group)
             await message.reply(self.strings.TITLE_TEMPLATE_UPDATED.format(template=template))
 
     async def handler_current_title_template(self, message: types.Message):
@@ -164,19 +245,46 @@ class VigilBot(object):
 
     def start(self):
         commands = [
+            (['add_admin'], self.handler_add_admin),
             (['add_group'], self.handler_add_group),
             (['enable'], self.handler_enable),
             (['disable'], self.handler_disable),
+            (['group_status'], self.handler_group_status),
+            (['current_timezone'], self.current_timezone),
+            (['update_timezone'], self.handler_update_timezone),
             (['enable_title_update'], self.handler_enable_title_update),
             (['disable_title_update'], self.handler_disable_title_update),
+            (['update_title_template'], self.handler_update_title_template),
             (['current_title_template'], self.handler_current_title_template)
         ]
         for command in commands:
             self.dispatcher.register_message_handler(command[1], commands=command[0])
             logger.info('Command "%s" registered' % command[0])
+        self.scheduler.add_job(self.update_title_all, 'interval', hours=1, next_run_time=datetime.now())
+        self.scheduler.start()
         executor.start_polling(self.dispatcher)
 
 
 if __name__ == '__main__':
-    vigil = VigilBot(TOKEN, ADMINS)
+    from sys import argv
+    import argparse
+    import trafaret as t
+    from trafaret_config import commandline
+
+    validator: t.Dict = t.Dict({
+        t.Key('token'): t.String,
+        t.Key('admins'):
+            t.List(t.Int())
+    })
+
+    parser: argparse.ArgumentParser = argparse.ArgumentParser()
+    commandline.standard_argparse_options(
+        parser,
+        default_config=CONFIG_PATH
+    )
+
+    options, unknown = parser.parse_known_args(argv)
+    config: dict = commandline.config_from_options(options, validator)
+
+    vigil: VigilBot = VigilBot(config['token'], config['admins'])
     vigil.start()

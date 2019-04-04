@@ -108,3 +108,4 @@ venv.bak/
 
 # data
 data.yaml
+config.yaml
