@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 class VigilStrings(object):
     ID_INVALID: str = '{id} 为无效 ID'
+    TOO_LESS_ARGUMENTS: str = '缺少参数'
     ADMIN_ADDED: str = '{id} 已被设为管理员'
+    GROUP_ADDED: str = '已添加群组 {id}'
     ENABLED: str = '已在本群组启用'
     DISABLED: str = '已在本群组禁用'
     GROUP_STATUS: str = '''\
@@ -26,7 +28,7 @@ class VigilStrings(object):
     是否启用： {enabled}
     时区： {timezone}
     是否启用标题自动更新： {title_enabled}
-    标题模板： {title_template}
+    标题模板： "{title_template}"
     '''  # 格式化歪打正着
     TIMEZONE_CURRENT: str = '当前时区为 {timezone}'
     TIMEZONE_INVALID: str = '无效的时区'
@@ -139,7 +141,11 @@ class VigilBot(object):
 
     async def handler_add_admin(self, message: types.Message):
         if message.from_user.id in self.data['admins']:
-            ids = message.text.split(' ')[1:]
+            try:
+                ids = message.text.split(' ')[1:]
+            except IndexError:
+                await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+                return
             response: str = ''
             for single_id in ids:
                 try:
@@ -154,8 +160,13 @@ class VigilBot(object):
 
     async def handler_add_group(self, message: types.Message):
         if message.from_user.id in self.data['admins']:
-            group_id: int = int(message.text.split(' ', maxsplit=1)[1])
+            try:
+                group_id: int = int(message.text.split(' ', maxsplit=1)[1])
+            except IndexError:
+                await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+                return
             self.add_group(group_id)
+            await message.reply(self.strings.GROUP_ADDED.format(id=group_id))
 
     async def handler_enable(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
@@ -198,7 +209,11 @@ class VigilBot(object):
     async def handler_update_timezone(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
-            timezone: str = str(message.text.split(' ', maxsplit=1)[1])
+            try:
+                timezone: str = str(message.text.split(' ', maxsplit=1)[1])
+            except IndexError:
+                await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+                return
             if timezone not in pytz.all_timezones:
                 await message.reply(self.strings.TIMEZONE_INVALID)
             group.timezone = timezone
@@ -231,7 +246,11 @@ class VigilBot(object):
     async def handler_update_title_template(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
-            template: str = str(message.text.split(' ', maxsplit=1)[1])
+            try:
+                template: str = str(message.text.split(' ', maxsplit=1)[1])
+            except IndexError:
+                await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+                return
             if template != group.title_template:
                 group.title_template = template
                 self.update_group(group)
