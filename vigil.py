@@ -189,6 +189,7 @@ class VigilGroup(yaml.YAMLObject):
             elif (localized_time.hour >= 0) and (localized_time.hour < 6):
                 if len(user_list) == 1:
                     self.update_winner(day_string, timezone, VigilWinner(user_list[0]))
+                    del self.hall[user_list[0].id]
             if self.mode.mode == VigilMode.LAST:
                 if (localized_time.hour == self.deadline) and (localized_time.minute in range(1)):
                     if self.deadline not in range(24):
