@@ -678,7 +678,7 @@ class VigilBot(object):
             return
         tz: pytz.timezone = pytz.timezone(user.timezone)
         localized_time: datetime = pytz.utc.localize(datetime.utcnow(), is_dst=None).astimezone(tz)
-        if (localized_time.hour < 6) and (localized_time.hour >= 0):
+        if (localized_time.hour < 6) or (localized_time.hour >= 23):
             user.active_time.append(datetime.utcnow())
             group.update_hall(user)
             self.update_group(group)
