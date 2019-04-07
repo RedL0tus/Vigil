@@ -209,7 +209,7 @@ class VigilGroup(yaml.YAMLObject):
                     self.clean_up_hall(timezone)
                     self.apply_auto_join(timezone)
             if self.mode.mode == VigilMode.NO_ACTIVITY:
-                if (localized_time.hour >= 0) and (localized_time.hour < 6):
+                if (localized_time.hour >= 1) and (localized_time.hour < 6):
                     remove_list: list = list()
                     for user in user_list:
                         if user.active_time[len(user.active_time) - 1] + timedelta(minutes=self.deadline) < utc_time:
@@ -686,7 +686,7 @@ class VigilBot(object):
             return
         tz: pytz.timezone = pytz.timezone(user.timezone)
         localized_time: datetime = pytz.utc.localize(datetime.utcnow(), is_dst=None).astimezone(tz)
-        if (localized_time.hour < 6) or (localized_time.hour >= 23):
+        if (localized_time.hour < 6) or (localized_time.hour >= 22):
             user.active_time.append(datetime.utcnow())
             group.update_hall(user)
             self.update_group(group)
