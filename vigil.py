@@ -441,7 +441,7 @@ class VigilBot(object):
             )
             await message.reply(response)
 
-    async def current_timezone(self, message: types.Message):
+    async def handler_current_timezone(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group:
             await message.reply(self.strings.TIMEZONE_CURRENT.format(timezone=group.timezone))
@@ -648,7 +648,7 @@ class VigilBot(object):
             (['enable'], self.handler_enable),
             (['disable'], self.handler_disable),
             (['group_status'], self.handler_group_status),
-            (['current_timezone'], self.current_timezone),
+            (['current_timezone'], self.handler_current_timezone),
             (['update_timezone'], self.handler_update_timezone),
             (['enable_title_update'], self.handler_enable_title_update),
             (['disable_title_update'], self.handler_disable_title_update),
