@@ -7,6 +7,7 @@ import yaml
 import logging
 
 from aiogram import Bot, Dispatcher, executor, types
+from aiogram.types.message import ContentType
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -675,10 +676,13 @@ class VigilBot(object):
         user: VigilUser or None = group.get_user(message.from_user.id)
         if not user:
             return
-        user.active_time.append(datetime.utcnow())
-        group.update_hall(user)
-        self.update_group(group)
-        logger.info('Status of user "%s" in group "%s" updated' % (user.id, group.id))
+        tz: pytz.timezone = pytz.timezone(user.timezone)
+        localized_time: datetime = pytz.utc.localize(datetime.utcnow(), is_dst=None).astimezone(tz)
+        if (localized_time.hour < 6) and (localized_time.hour >= 0):
+            user.active_time.append(datetime.utcnow())
+            group.update_hall(user)
+            self.update_group(group)
+            logger.info('Status of user "%s" in group "%s" updated' % (user.id, group.id))
 
     def start(self):
         commands = [
@@ -707,7 +711,7 @@ class VigilBot(object):
         for command in commands:
             self.dispatcher.register_message_handler(command[1], commands=command[0])
             logger.info('Command "%s" registered' % command[0])
-        self.dispatcher.register_message_handler(self.handler_update_user)
+        self.dispatcher.register_message_handler(self.handler_update_user, content_types=ContentType.ANY)
         self.scheduler.add_job(self.update_title_all, 'cron', minute='*/30', next_run_time=datetime.now())
         self.scheduler.add_job(self.broadcast_winner, 'cron', minute='*/1', next_run_time=datetime.now())
         self.scheduler.add_job(self.broadcast_match_start, 'cron', minute='*/30')
