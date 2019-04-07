@@ -37,6 +37,7 @@ class VigilStrings(object):
     STATUS_BROADCAST: str = '{timezone} 赛区还有 {number} 人参赛'
     STATUS_EMPTY: str = '无人参赛，你们太弱了'
     MATCH_START_BROADCAST: str = '{timezone} 赛区的守夜大赛正式开始！共有 {number} 人参赛，祝各位武运昌隆（flag）！'
+    MATCH_GOING_TO_START_BROADCAST: str = '{timezone} 赛区的大赛将在一小时后开始，请各位选手做好准备！'
     BROADCAST_ENABLED: str = '已启用广播'
     BROADCAST_DISABLED: str = '已禁用广播'
     TIMEZONE_CURRENT: str = '当前时区为 {timezone}'
@@ -369,6 +370,13 @@ class VigilBot(object):
                             self.strings.MATCH_START_BROADCAST.format(
                                 timezone=timezone,
                                 number=len(user_list)
+                            )
+                        )
+                    elif localized_time.hour == 23:
+                        await self.bot.send_message(
+                            group.id,
+                            self.strings.MATCH_GOING_TO_START_BROADCAST.format(
+                                timezone=timezone
                             )
                         )
 
