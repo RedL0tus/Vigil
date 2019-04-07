@@ -56,6 +56,8 @@ class VigilStrings(object):
     AUTO_JOIN_ENABLED: str = '已设置自动加入 {timezone} 场次'
     AUTO_JOIN_DISABLED: str = '已取消自动加入'
     WINNER_FOUND: str = '本届大赛 {timezone} 场次的冠军是 {user}'
+    INVALID_STRING: str = '草这什么鬼名字'
+    TIME_RESPONSE: str = '{timezone} 赛区的时间为 {time}'
 
 
 class VigilMode(yaml.YAMLObject):
@@ -203,8 +205,7 @@ class VigilGroup(yaml.YAMLObject):
                         continue
                     self.update_winner(day_string, timezone, VigilWinner(last_user))
                     self.clean_up_hall(timezone)
-                    if len(self.hall) == 0:
-                        self.apply_auto_join(timezone)
+                    self.apply_auto_join(timezone)
             if self.mode.mode == VigilMode.NO_ACTIVITY:
                 if (localized_time.hour >= 0) and (localized_time.hour < 6):
                     remove_list: list = list()
@@ -219,7 +220,10 @@ class VigilGroup(yaml.YAMLObject):
                                 winner = user
                         self.update_winner(day_string, timezone, VigilWinner(winner))
                     for user in remove_list:
-                        del self.hall[user.id]
+                        try:
+                            del self.hall[user.id]
+                        except KeyError:
+                            continue
                 if localized_time.hour >= 6:
                     self.apply_auto_join(timezone)
 
@@ -242,6 +246,12 @@ class VigilBot(object):
             self.data['admins']: list = list()
         self.data['admins']: list = list(set(self.data['admins'] + admins))
         self.dump_data()
+
+    def html_escape_for_the_damn_parser_of_telegram(self, text):
+        try:
+            return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        except AttributeError:
+            return self.strings.INVALID_STRING
 
     def load_data(self):
         if os.path.isfile(self.data_path):
@@ -331,15 +341,16 @@ class VigilBot(object):
                 user: types.ChatMember = await self.bot.get_chat_member(group.id, winner.id)
                 user_name: str = user.user.first_name
                 user_name += ' ' + user.user.last_name if user.user.last_name else ''
+                user_name = self.html_escape_for_the_damn_parser_of_telegram(user_name)
                 result += self.strings.WINNER_FOUND.format(
-                    timezone=timezone,
-                    user='[%s](tg://user?id=%s)' % (user_name, user.user.id)
+                    timezone=self.html_escape_for_the_damn_parser_of_telegram(timezone),
+                    user='<a href="tg://user?id=%s">%s</a>' % (user.user.id, user_name)
                 ) + '\n'
                 winner.broadcasted = True
                 group.update_winner(date, timezone, winner)
             self.update_group(group)
             if result and group.broadcast_status:
-                await self.bot.send_message(group.id, result, parse_mode='Markdown')
+                await self.bot.send_message(group.id, result, parse_mode='HTML')
 
     async def broadcast_match_start(self):
         now = datetime.utcnow()
@@ -629,6 +640,34 @@ class VigilBot(object):
                 self.update_group(group)
             await message.reply(self.strings.AUTO_JOIN_DISABLED)
 
+    async def handler_time(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if (not group) or (not group.enabled):
+            return
+        user: VigilUser or None = group.get_user(message.from_user.id)
+        utc_time: datetime = datetime.utcnow()
+        try:
+            timezone = str(message.text.split(' ', maxsplit=1)[1])
+        except IndexError:
+            if user:
+                timezone: str = user.timezone
+            else:
+                user: VigilUser or None = group.auto_join.get(message.from_user.id, None)
+                if user:
+                    timezone: str = user.timezone
+                else:
+                    timezone: str = group.timezone
+        if timezone not in pytz.all_timezones:
+            await message.reply(self.strings.TIMEZONE_INVALID)
+            return
+        tz: pytz.timezone = pytz.timezone(timezone)
+        localized_time: datetime = pytz.utc.localize(utc_time, is_dst=None).astimezone(tz)
+        response: str = self.strings.TIME_RESPONSE.format(
+            timezone=timezone, time=localized_time.strftime('%H:%M')
+        ) + '\n'
+        response += self.strings.TIME_RESPONSE.format(timezone='UTC', time=utc_time.strftime('%H:%M'))
+        await message.reply(response)
+
     async def handler_update_user(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if (not group) or (not group.enabled):
@@ -662,13 +701,14 @@ class VigilBot(object):
             (['join'], self.handler_join),
             (['quit'], self.handler_quit),
             (['auto_join'], self.handler_auto_join),
-            (['disable_auto_join'], self.handler_disable_auto_join)
+            (['disable_auto_join'], self.handler_disable_auto_join),
+            (['time'], self.handler_time)
         ]
         for command in commands:
             self.dispatcher.register_message_handler(command[1], commands=command[0])
             logger.info('Command "%s" registered' % command[0])
         self.dispatcher.register_message_handler(self.handler_update_user)
-        self.scheduler.add_job(self.update_title_all, 'interval', hours=1, next_run_time=datetime.now())
+        self.scheduler.add_job(self.update_title_all, 'cron', minute='*/30', next_run_time=datetime.now())
         self.scheduler.add_job(self.broadcast_winner, 'cron', minute='*/1', next_run_time=datetime.now())
         self.scheduler.add_job(self.broadcast_match_start, 'cron', minute='*/30')
         self.scheduler.add_job(self.broadcast_hall_status, 'cron', hour='*/2')
