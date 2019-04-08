@@ -178,17 +178,13 @@ class VigilGroup(yaml.YAMLObject):
     def find_winner(self):
         if not self.enabled:
             return
-        if len(self.hall) < 1:
-            return
         utc_time: datetime = datetime.utcnow()
         day_string: str = utc_time.strftime('%Y/%m/%d')
         for timezone in pytz.all_timezones:
             user_list: list = self.find_user_with_timezone(self.hall, timezone)
-            if len(user_list) == 0:
-                continue
             tz: pytz.timezone = pytz.timezone(timezone)
             localized_time: datetime = pytz.utc.localize(utc_time, is_dst=None).astimezone(tz)
-            if localized_time.hour > 6:
+            if localized_time.hour > 7:
                 continue
             elif (localized_time.hour >= 0) and (localized_time.hour < 6):
                 if len(user_list) == 1:
@@ -226,7 +222,7 @@ class VigilGroup(yaml.YAMLObject):
                             del self.hall[user.id]
                         except KeyError:
                             continue
-                if localized_time.hour >= 6:
+                if (localized_time.hour == 6) and (localized_time.minute in range(1)):
                     self.apply_auto_join(timezone)
 
 
