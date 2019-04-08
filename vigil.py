@@ -30,7 +30,8 @@ class VigilStrings(object):
     时区： {timezone}
     是否启用标题自动更新： {title_enabled}
     标题模板： "{title_template}"
-    是否启用广播： {broadcast_enabled}
+    是否启用状态广播： {broadcast_status_enabled}
+    是否启用冠军广播： {broadcast_winner_enabled}
     裁判模式： {mode}
     指定时间： {deadline}
     '''  # 格式化歪打正着
@@ -118,7 +119,8 @@ class VigilGroup(yaml.YAMLObject):
             title_template: str = '椰树 {yeshu_year} 年第 {day} 届守夜大赛',
             mode: VigilMode = VigilMode(VigilMode.LAST),
             deadline: int = 6,
-            broadcast_status: bool = False
+            broadcast_status: bool = False,
+            broadcast_winner: bool = True
     ):
         self.id: int = group_id
         self.enabled: bool = enabled
@@ -131,6 +133,7 @@ class VigilGroup(yaml.YAMLObject):
         self.deadline: int = deadline
         self.winners: dict = dict()
         self.broadcast_status = broadcast_status
+        self.broadcast_winner = broadcast_winner
 
     def get_user(self, user_id) -> VigilUser:
         return self.hall.get(user_id, None)
@@ -347,7 +350,7 @@ class VigilBot(object):
                 winner.broadcasted = True
                 group.update_winner(date, timezone, winner)
             self.update_group(group)
-            if result and group.broadcast_status:
+            if result and group.broadcast_winner:
                 await self.bot.send_message(group.id, result, parse_mode='HTML')
 
     async def broadcast_match_start(self):
@@ -451,7 +454,8 @@ class VigilBot(object):
                 timezone=str(group.timezone),
                 title_enabled='是' if group.title_enabled else '否',
                 title_template=str(group.title_template),
-                broadcast_enabled='是' if group.broadcast_status else '否',
+                broadcast_status_enabled='是' if group.broadcast_status else '否',
+                broadcast_winner_enabled='是' if group.broadcast_winner else '否',
                 mode=mode,
                 deadline=str(group.deadline) + unit
             )
@@ -562,7 +566,7 @@ class VigilBot(object):
             logger.info('Deadline of group "%s" has been updated to "%s"' % (group.id, time))
             await message.reply(self.strings.DEADLINE_UPDATED.format(deadline=time))
 
-    async def handler_enable_broadcast(self, message: types.Message):
+    async def handler_enable_status_broadcast(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
             if not group.broadcast_status:
@@ -571,11 +575,29 @@ class VigilBot(object):
                 logger.info('Broadcasting enabled for group with ID "%s"' % group.id)
             await message.reply(self.strings.BROADCAST_ENABLED)
 
-    async def handler_disable_broadcast(self, message: types.Message):
+    async def handler_disable_status_broadcast(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
             if group.broadcast_status:
                 group.broadcast_status = False
+                self.update_group(group)
+                logger.info('Broadcasting disabled for group with ID "%s"' % group.id)
+            await message.reply(self.strings.BROADCAST_DISABLED)
+
+    async def handler_enable_winner_broadcast(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and (await self.is_valid(group, message)):
+            if not group.broadcast_winner:
+                group.broadcast_winner = True
+                self.update_group(group)
+                logger.info('Broadcasting enabled for group with ID "%s"' % group.id)
+            await message.reply(self.strings.BROADCAST_ENABLED)
+
+    async def handler_disable_winner_broadcast(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and (await self.is_valid(group, message)):
+            if group.broadcast_winner:
+                group.broadcast_winner = False
                 self.update_group(group)
                 logger.info('Broadcasting disabled for group with ID "%s"' % group.id)
             await message.reply(self.strings.BROADCAST_DISABLED)
@@ -703,8 +725,10 @@ class VigilBot(object):
             (['current_title_template'], self.handler_current_title_template),
             (['update_mode'], self.handler_update_mode),
             (['update_deadline'], self.handler_update_deadline),
-            (['enable_broadcast'], self.handler_enable_broadcast),
-            (['disable_broadcast'], self.handler_disable_broadcast),
+            (['enable_broadcast', 'enable_status_broadcast'], self.handler_enable_status_broadcast),
+            (['disable_broadcast', 'disable_status_broadcast'], self.handler_disable_status_broadcast),
+            (['enable_winner_broadcast'], self.handler_enable_winner_broadcast),
+            (['disable_winner_broadcast'], self.handler_disable_winner_broadcast),
             (['status', 'match_status'], self.handler_match_status),
             (['join'], self.handler_join),
             (['quit'], self.handler_quit),
