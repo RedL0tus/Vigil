@@ -58,7 +58,7 @@ class VigilStrings(object):
     QUIT: str = '已退出本届大赛'
     AUTO_JOIN_ENABLED: str = '已设置自动加入 {timezone} 场次'
     AUTO_JOIN_DISABLED: str = '已取消自动加入'
-    WINNER_FOUND: str = '本届大赛 {timezone} 场次的冠军是 {user}'
+    WINNER_FOUND: str = '本届大赛 {timezone} 场次的冠军是 {user} ，于当地时间 {time} 决出'
     INVALID_STRING: str = '草这什么鬼名字'
     TIME_RESPONSE: str = '{timezone} 赛区的时间为 {time}'
 
@@ -339,13 +339,16 @@ class VigilBot(object):
                 winner: VigilWinner = group.winners[date][timezone]
                 if (not winner) or winner.broadcasted:
                     continue
+                tz: pytz.timezone = pytz.timezone(timezone)
+                time: str = pytz.utc.localize(winner.last_online, is_dst=None).astimezone(tz).strftime('%H:%M')
                 user: types.ChatMember = await self.bot.get_chat_member(group.id, winner.id)
                 user_name: str = user.user.first_name
                 user_name += ' ' + user.user.last_name if user.user.last_name else ''
                 user_name = self.html_escape_for_the_damn_parser_of_telegram(user_name)
                 result += self.strings.WINNER_FOUND.format(
                     timezone=self.html_escape_for_the_damn_parser_of_telegram(timezone),
-                    user='<a href="tg://user?id=%s">%s</a>' % (user.user.id, user_name)
+                    user='<a href="tg://user?id=%s">%s</a>' % (user.user.id, user_name),
+                    time=time
                 ) + '\n'
                 winner.broadcasted = True
                 group.update_winner(date, timezone, winner)
