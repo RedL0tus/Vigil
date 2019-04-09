@@ -61,6 +61,7 @@ class VigilStrings(object):
     WINNER_FOUND: str = '本届大赛 {offset} offset 的赛区({timezone})的冠军是 {user} ，于当地时间 {time} 决出'
     INVALID_STRING: str = '草这什么鬼名字'
     TIME_RESPONSE: str = '{timezone} 赛区的时间为 {time}'
+    I_AM_AWAKE_RESPONSE: str = '我活了'
 
 
 class VigilMode(yaml.YAMLObject):
@@ -753,6 +754,10 @@ class VigilBot(object):
             self.update_group(group)
             logger.info('Status of user "%s" in group "%s" updated' % (user.id, group.id))
 
+    async def handler_imawake(self, message: types.Message):
+        await self.handler_update_user(message)
+        await message.reply(self.strings.I_AM_AWAKE_RESPONSE)
+
     def start(self):
         commands = [
             (['add_admin'], self.handler_add_admin),
@@ -777,7 +782,8 @@ class VigilBot(object):
             (['quit'], self.handler_quit),
             (['auto_join'], self.handler_auto_join),
             (['disable_auto_join'], self.handler_disable_auto_join),
-            (['time'], self.handler_time)
+            (['time'], self.handler_time),
+            (['imawake'], self.handler_imawake)
         ]
         for command in commands:
             self.dispatcher.register_message_handler(command[1], commands=command[0])
