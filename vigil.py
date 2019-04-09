@@ -37,8 +37,8 @@ class VigilStrings(object):
     '''  # 格式化歪打正着
     STATUS_BROADCAST: str = '{timezone} 赛区还有 {number} 人参赛'
     STATUS_EMPTY: str = '无人参赛，你们太弱了'
-    MATCH_START_BROADCAST: str = '{timezone} 赛区的守夜大赛正式开始！共有 {number} 人参赛，祝各位武运昌隆（flag）！'
-    MATCH_GOING_TO_START_BROADCAST: str = '{timezone} 赛区的大赛将在一小时后开始，请各位选手做好准备！'
+    MATCH_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的守夜大赛正式开始！共有 {number} 人参赛，祝各位武运昌隆（flag）！'
+    MATCH_GOING_TO_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的大赛将在一小时后开始，请各位选手做好准备！'
     BROADCAST_ENABLED: str = '已启用广播'
     BROADCAST_DISABLED: str = '已禁用广播'
     TIMEZONE_CURRENT: str = '当前时区为 {timezone}'
@@ -58,7 +58,7 @@ class VigilStrings(object):
     QUIT: str = '已退出本届大赛'
     AUTO_JOIN_ENABLED: str = '已设置自动加入 {timezone} 场次'
     AUTO_JOIN_DISABLED: str = '已取消自动加入'
-    WINNER_FOUND: str = '本届大赛 {timezone} 场次的冠军是 {user} ，于当地时间 {time} 决出'
+    WINNER_FOUND: str = '本届大赛 {offset} offset 的赛区({timezone})的冠军是 {user} ，于当地时间 {time} 决出'
     INVALID_STRING: str = '草这什么鬼名字'
     TIME_RESPONSE: str = '{timezone} 赛区的时间为 {time}'
 
@@ -100,9 +100,10 @@ class VigilWinner(yaml.YAMLObject):
     yaml_dumper: yaml.SafeDumper = yaml.SafeDumper
     yaml_tag: str = '!VigilWinner'
 
-    def __init__(self, user: VigilUser, broadcasted: bool = False):
+    def __init__(self, user: VigilUser, timezones: list, broadcasted: bool = False):
         self.id: int = user.id
         self.last_online: datetime = user.active_time[len(user.active_time) - 1]
+        self.timezones: list = timezones
         self.broadcasted: bool = broadcasted
 
 
@@ -142,11 +143,11 @@ class VigilGroup(yaml.YAMLObject):
         logger.info('Information of user with ID "%s" updated' % user.id)
         self.hall[user.id] = user
 
-    def update_winner(self, date: str, timezone: str, winner: VigilWinner):
+    def update_winner(self, date: str, offset: str, winner: VigilWinner):
         logger.info('Information of winner with ID "%s" updated' % winner.id)
         if not self.winners.get(date, None):
             self.winners[date]: dict = dict()
-        self.winners[date][timezone] = winner
+        self.winners[date][offset] = winner
 
     def search_winner_record(self, timezone: str, date: str) -> VigilUser or None:
         if type(self.winners[date]) != dict:
@@ -170,63 +171,98 @@ class VigilGroup(yaml.YAMLObject):
             except KeyError:
                 pass
 
-    def apply_auto_join(self, timezone):
-        user_list: list = self.find_user_with_timezone(self.auto_join, timezone)
-        for user in user_list:
-            user.active_time = list()
-            user.active_time.append(datetime.utcnow())
-            if user.id not in self.hall.keys():
-                self.hall[user.id] = user
+    def apply_auto_join(self):
+        utc_now: datetime = datetime.utcnow()
+        for timezone in pytz.all_timezones:
+            user_list: list = self.find_user_with_timezone(self.auto_join, timezone)
+            if len(user_list) < 1:
+                continue
+            localized_time: datetime = pytz.utc.localize(utc_now, is_dst=None).astimezone(pytz.timezone(timezone))
+            if self.mode.mode == VigilMode.LAST:
+                if localized_time.hour != self.deadline:
+                    continue
+                elif localized_time.minute != 30:
+                    continue
+            if self.mode.mode == VigilMode.NO_ACTIVITY:
+                if localized_time.hour != 6:
+                    continue
+                elif localized_time.minute not in range(1):
+                    continue
+            for user in user_list:
+                user.active_time = list()
+                user.active_time.append(datetime.utcnow())
+                if user.id not in self.hall.keys():
+                    self.hall[user.id] = user
+
+    def i_dont_know_how_to_name_this_method(self) -> dict:
+        result: dict = dict()
+        utc_now: datetime = datetime.utcnow()
+        for timezone in pytz.all_timezones:
+            user_list: list = self.find_user_with_timezone(self.hall, timezone)
+            if len(user_list) < 1:
+                continue
+            tz: pytz.timezone = pytz.timezone(timezone)
+            offset = pytz.utc.localize(utc_now, is_dst=None).astimezone(tz).strftime('%z')
+            if offset not in result.keys():
+                result[offset] = (list(), list())
+            (timezones, users) = result[offset]
+            timezones.append(timezone)
+            users = users + user_list
+            result[offset] = (timezones, users)
+        return result
+
+    @staticmethod
+    def find_latest_user(users) -> VigilUser or None:
+        if len(users) == 0:
+            return None
+        last_user: VigilUser = VigilUser(0, datetime(1970, 1, 1), is_dummy=True)  # Dummy user
+        for user in users:
+            if user.active_time[len(user.active_time) - 1] > \
+                    last_user.active_time[len(last_user.active_time) - 1]:
+                last_user = user
+        return last_user
 
     def find_winner(self):
         if not self.enabled:
             return
         utc_time: datetime = datetime.utcnow()
         day_string: str = utc_time.strftime('%Y/%m/%d')
-        for timezone in pytz.all_timezones:
-            user_list: list = self.find_user_with_timezone(self.hall, timezone)
-            tz: pytz.timezone = pytz.timezone(timezone)
+        users_in_matches: dict = self.i_dont_know_how_to_name_this_method()
+        for offset, (timezones, users) in users_in_matches.items():
+            tz: pytz.timezone = pytz.timezone(timezones[0])
             localized_time: datetime = pytz.utc.localize(utc_time, is_dst=None).astimezone(tz)
             if localized_time.hour > 7:
                 continue
             elif (localized_time.hour >= 0) and (localized_time.hour < 6):
-                if len(user_list) == 1:
-                    self.update_winner(day_string, timezone, VigilWinner(user_list[0]))
-                    del self.hall[user_list[0].id]
+                if len(users) == 1:
+                    self.update_winner(day_string, offset, VigilWinner(users[0], timezones))
+                    del self.hall[users[0].id]
             if self.mode.mode == VigilMode.LAST:
-                if (localized_time.hour == self.deadline) and (localized_time.minute in range(1)):
-                    if self.deadline not in range(24):
-                        return
-                    last_user: VigilUser = VigilUser(0, datetime(1070, 1, 1), is_dummy=True)  # Dummy user
-                    for user in user_list:
-                        if user.active_time[len(user.active_time) - 1] >\
-                                last_user.active_time[len(last_user.active_time) - 1]:
-                            last_user = user
-                    if last_user.is_dummy:
-                        continue
-                    self.update_winner(day_string, timezone, VigilWinner(last_user))
-                    self.clean_up_hall(timezone)
-                    self.apply_auto_join(timezone)
+                if self.deadline not in range(24):
+                    continue
+                if len(users) == 0:
+                    continue
+                if (localized_time.hour == self.deadline) and (localized_time.minute == 0):
+                    winner: VigilUser = self.find_latest_user(users)
+                    self.update_winner(day_string, offset, VigilWinner(winner, timezones))
+                    for timezone in timezones:
+                        self.clean_up_hall(timezone)
             if self.mode.mode == VigilMode.NO_ACTIVITY:
                 if (localized_time.hour >= 1) and (localized_time.hour < 6):
                     remove_list: list = list()
-                    for user in user_list:
+                    for user in users:
                         if user.active_time[len(user.active_time) - 1] + timedelta(minutes=self.deadline) < utc_time:
                             remove_list.append(user)
-                    if (len(user_list) - len(remove_list) == 0) and (len(remove_list) > 0):
-                        winner: VigilUser = VigilUser(0, datetime(1070, 1, 1), is_dummy=True)  # Dummy user
-                        for user in remove_list:
-                            if user.active_time[len(user.active_time) - 1] >\
-                                    winner.active_time[len(winner.active_time) - 1]:
-                                winner = user
-                        self.update_winner(day_string, timezone, VigilWinner(winner))
+                    if (len(users) - len(remove_list) == 0) and (len(remove_list) > 0):
+                        winner: VigilUser or None = self.find_latest_user(remove_list)
+                        if winner:
+                            self.update_winner(day_string, offset, VigilWinner(winner, timezones))
                     for user in remove_list:
                         try:
                             del self.hall[user.id]
                         except KeyError:
                             continue
-                if (localized_time.hour == 6) and (localized_time.minute in range(1)):
-                    self.apply_auto_join(timezone)
+        self.apply_auto_join()
 
 
 class VigilBot(object):
@@ -335,23 +371,23 @@ class VigilBot(object):
             if date not in group.winners.keys():
                 continue
             result: str = ''
-            for timezone in group.winners[date].keys():
-                winner: VigilWinner = group.winners[date][timezone]
+            for offset, winner in group.winners[date].items():
                 if (not winner) or winner.broadcasted:
                     continue
-                tz: pytz.timezone = pytz.timezone(timezone)
+                tz: pytz.timezone = pytz.timezone(winner.timezones[0])
                 time: str = pytz.utc.localize(winner.last_online, is_dst=None).astimezone(tz).strftime('%H:%M')
                 user: types.ChatMember = await self.bot.get_chat_member(group.id, winner.id)
                 user_name: str = user.user.first_name
                 user_name += ' ' + user.user.last_name if user.user.last_name else ''
                 user_name = self.html_escape_for_the_damn_parser_of_telegram(user_name)
                 result += self.strings.WINNER_FOUND.format(
-                    timezone=self.html_escape_for_the_damn_parser_of_telegram(timezone),
+                    offset=offset,
+                    timezone=self.html_escape_for_the_damn_parser_of_telegram(', '.join(winner.timezones)),
                     user='<a href="tg://user?id=%s">%s</a>' % (user.user.id, user_name),
                     time=time
                 ) + '\n'
                 winner.broadcasted = True
-                group.update_winner(date, timezone, winner)
+                group.update_winner(date, offset, winner)
             self.update_group(group)
             if result and group.broadcast_winner:
                 await self.bot.send_message(group.id, result, parse_mode='HTML')
@@ -361,24 +397,26 @@ class VigilBot(object):
         for group in self.data['groups'].values():
             if not group.broadcast_status:
                 continue
-            for timezone in pytz.all_timezones:
-                user_list: list = group.find_user_with_timezone(group.hall, timezone)
-                if len(user_list) > 0:
-                    tz: pytz.timezone = pytz.timezone(timezone)
+            matched_users = group.i_dont_know_how_to_name_this_method()
+            for offset, (timezones, users) in matched_users.items():
+                if len(users) > 0:
+                    tz: pytz.timezone = pytz.timezone(timezones[0])
                     localized_time: datetime = pytz.utc.localize(now, is_dst=None).astimezone(tz)
                     if (localized_time.hour == 0) and (localized_time.minute == 0):
                         await self.bot.send_message(
                             group.id,
                             self.strings.MATCH_START_BROADCAST.format(
-                                timezone=timezone,
-                                number=len(user_list)
+                                offset=offset,
+                                timezone=', '.join(timezones),
+                                number=len(users)
                             )
                         )
                     elif localized_time.hour == 23:
                         await self.bot.send_message(
                             group.id,
                             self.strings.MATCH_GOING_TO_START_BROADCAST.format(
-                                timezone=timezone
+                                offset=offset,
+                                timezone=', '.join(timezones)
                             )
                         )
 
