@@ -35,7 +35,7 @@ class VigilStrings(object):
     裁判模式： {mode}
     指定时间： {deadline}
     '''  # 格式化歪打正着
-    STATUS_BROADCAST: str = '{timezone} 赛区还有 {number} 人参赛'
+    STATUS_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区还有 {number} 人参赛'
     STATUS_EMPTY: str = '无人参赛，你们太弱了'
     MATCH_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的守夜大赛正式开始！共有 {number} 人参赛，祝各位武运昌隆（flag）！'
     MATCH_GOING_TO_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的大赛将在一小时后开始，请各位选手做好准备！'
@@ -248,7 +248,7 @@ class VigilGroup(yaml.YAMLObject):
                     for timezone in timezones:
                         self.clean_up_hall(timezone)
             if self.mode.mode == VigilMode.NO_ACTIVITY:
-                if (localized_time.hour >= 1) and (localized_time.hour < 6):
+                if (localized_time.hour >= 0) and (localized_time.hour < 6):
                     remove_list: list = list()
                     for user in users:
                         if user.active_time[len(user.active_time) - 1] + timedelta(minutes=self.deadline) < utc_time:
@@ -353,10 +353,13 @@ class VigilBot(object):
 
     def hall_status(self, group) -> str or None:
         content: str = ''
-        for timezone in pytz.all_timezones:
-            users: list = group.find_user_with_timezone(group.hall, timezone)
+        for offset, (timezones, users) in group.i_dont_know_how_to_name_this_method().items():
             if len(users) > 0:
-                content += self.strings.STATUS_BROADCAST.format(timezone=timezone, number=len(users)) + '\n'
+                content += self.strings.STATUS_BROADCAST.format(
+                    offset=offset,
+                    timezone=', '.join(timezones),
+                    number=len(users)
+                ) + '\n'
         if content != '':
             return content
         else:
@@ -397,8 +400,7 @@ class VigilBot(object):
         for group in self.data['groups'].values():
             if not group.broadcast_status:
                 continue
-            matched_users = group.i_dont_know_how_to_name_this_method()
-            for offset, (timezones, users) in matched_users.items():
+            for offset, (timezones, users) in group.i_dont_know_how_to_name_this_method().items():
                 if len(users) > 0:
                     tz: pytz.timezone = pytz.timezone(timezones[0])
                     localized_time: datetime = pytz.utc.localize(now, is_dst=None).astimezone(tz)
