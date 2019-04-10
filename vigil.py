@@ -35,6 +35,13 @@ class VigilStrings(object):
     裁判模式： {mode}
     指定时间： {deadline}
     '''  # 格式化歪打正着
+    GROUP_STATUS_SLAVE: str = '''\
+    群组 ID： {id}
+    主群组 ID： {master_id}
+    时区： {timezone}
+    是否启用标题自动更新： {title_enabled}
+    标题模板： "{title_template}"
+    '''
     STATUS_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区还有 {number} 人参赛'
     STATUS_EMPTY: str = '无人参赛，你们太弱了'
     MATCH_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的守夜大赛正式开始！共有 {number} 人参赛，祝各位武运昌隆（flag）！'
@@ -116,6 +123,8 @@ class VigilGroup(yaml.YAMLObject):
     def __init__(
             self, group_id: int,
             enabled: bool = False,
+            master: bool = True,
+            slave_of: int = 0,
             timezone: str = 'Asia/Shanghai',
             title_enabled: bool = False,
             title_template: str = '椰树 {yeshu_year} 年第 {day} 届守夜大赛',
@@ -126,6 +135,8 @@ class VigilGroup(yaml.YAMLObject):
     ):
         self.id: int = group_id
         self.enabled: bool = enabled
+        self.master: bool = master
+        self.slave_of: int = slave_of
         self.timezone: str = timezone
         self.title_enabled: bool = title_enabled
         self.title_template: str = title_template
@@ -137,7 +148,7 @@ class VigilGroup(yaml.YAMLObject):
         self.broadcast_status = broadcast_status
         self.broadcast_winner = broadcast_winner
 
-    def get_user(self, user_id) -> VigilUser:
+    def get_user(self, user_id) -> VigilUser or None:
         return self.hall.get(user_id, None)
 
     def update_hall(self, user: VigilUser):
@@ -224,7 +235,7 @@ class VigilGroup(yaml.YAMLObject):
         return last_user
 
     def find_winner(self):
-        if not self.enabled:
+        if (not self.enabled) or (not self.master):
             return
         utc_time: datetime = datetime.utcnow()
         day_string: str = utc_time.strftime('%Y/%m/%d')
@@ -302,17 +313,23 @@ class VigilBot(object):
             yaml.safe_dump(self.data, f)
             logger.info('Data dumped to "%s"' % self.data_path)
 
-    def add_group(self, group_id: int):
+    def add_group(self, group_id: int, master: bool = True, slave_of: int = 0):
         if group_id >= 0:
             logger.info('Invalid group ID')
             return
         if group_id not in self.data['groups'].keys():
-            self.data['groups'][group_id]: VigilGroup = VigilGroup(group_id)
+            self.data['groups'][group_id]: VigilGroup = VigilGroup(group_id, master=master, slave_of=slave_of)
             logger.info('Group with ID "%s" has been added' % group_id)
             self.dump_data()
 
-    def get_group(self, group_id) -> VigilGroup or None:
-        return self.data['groups'].get(group_id, None)
+    def get_group(self, group_id: int, follow_redir: bool = False) -> VigilGroup or None:
+        group: VigilGroup or None = self.data['groups'].get(group_id, None)
+        if not group:
+            return None
+        if follow_redir and (not group.master):
+            return self.data['groups'].get(group.slave_of, None)
+        else:
+            return group
 
     def update_group(self, group: VigilGroup):
         if group.id in self.data['groups'].keys():
@@ -370,6 +387,8 @@ class VigilBot(object):
         now = datetime.utcnow()
         date: str = now.strftime('%Y/%m/%d')
         for group in self.data['groups'].values():
+            if not group.master:
+                continue
             group.find_winner()
             self.update_group(group)
             if date not in group.winners.keys():
@@ -399,7 +418,7 @@ class VigilBot(object):
     async def broadcast_match_start(self):
         now = datetime.utcnow()
         for group in self.data['groups'].values():
-            if not group.broadcast_status:
+            if (not group.broadcast_status) or (not group.master):
                 continue
             for offset, (timezones, users) in group.i_dont_know_how_to_name_this_method().items():
                 if len(users) > 0:
@@ -425,7 +444,7 @@ class VigilBot(object):
 
     async def broadcast_hall_status(self):
         for group in self.data['groups'].values():
-            if not group.broadcast_status:
+            if (not group.broadcast_status) or (not group.master):
                 continue
             content = self.hall_status(group)
             if content:
@@ -472,6 +491,20 @@ class VigilBot(object):
                 logger.info('Bot enabled for group with ID "%s"' % group.id)
             await message.reply(self.strings.ENABLED)
 
+    async def handler_slave(self, message: types.Message):
+        if message.from_user.id not in self.data['admins']:
+            return
+        try:
+            master: int = int(message.text.split(' ', maxsplit=1)[1])
+        except IndexError:
+            await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+            return
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group:
+            del self.data['groups'][group.id]
+        self.add_group(message.chat.id, master=False, slave_of=master)
+        await message.reply(self.strings.GROUP_ADDED.format(id=master))  # Because I'm too lazy to write another string.
+
     async def handler_disable(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
@@ -484,6 +517,17 @@ class VigilBot(object):
     async def handler_group_status(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and (await self.is_valid(group, message)):
+            if not group.master:
+                await message.reply(
+                    self.strings.GROUP_STATUS_SLAVE.format(
+                        id=str(group.id),
+                        master_id=str(group.slave_of),
+                        timezone=str(group.timezone),
+                        title_enabled='是' if group.enabled else '否',
+                        title_template=str(group.title_template)
+                    )
+                )
+                return
             mode: str = ''
             unit: str = ''
             if group.mode.mode == VigilMode.LAST:
@@ -568,7 +612,7 @@ class VigilBot(object):
 
     async def handler_match_status(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and group.enabled:
+        if group and group.enabled and group.master:
             response = self.hall_status(group)
             if response:
                 await message.reply(response)
@@ -577,7 +621,7 @@ class VigilBot(object):
 
     async def handler_update_mode(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and (await self.is_valid(group, message)):
+        if group and (await self.is_valid(group, message)) and group.master:
             try:
                 mode_string: str = str(message.text.split(' ', maxsplit=1)[1]).lower()
             except IndexError:
@@ -596,7 +640,7 @@ class VigilBot(object):
 
     async def handler_update_deadline(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and (await self.is_valid(group, message)):
+        if group and (await self.is_valid(group, message)) and group.master:
             try:
                 time: int = int(message.text.split(' ', maxsplit=1)[1])
             except IndexError:
@@ -612,7 +656,7 @@ class VigilBot(object):
 
     async def handler_enable_status_broadcast(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and (await self.is_valid(group, message)):
+        if group and (await self.is_valid(group, message)) and group.master:
             if not group.broadcast_status:
                 group.broadcast_status = True
                 self.update_group(group)
@@ -621,7 +665,7 @@ class VigilBot(object):
 
     async def handler_disable_status_broadcast(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and (await self.is_valid(group, message)):
+        if group and (await self.is_valid(group, message)) and group.master:
             if group.broadcast_status:
                 group.broadcast_status = False
                 self.update_group(group)
@@ -630,7 +674,7 @@ class VigilBot(object):
 
     async def handler_enable_winner_broadcast(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and (await self.is_valid(group, message)):
+        if group and (await self.is_valid(group, message)) and group.master:
             if not group.broadcast_winner:
                 group.broadcast_winner = True
                 self.update_group(group)
@@ -639,7 +683,7 @@ class VigilBot(object):
 
     async def handler_disable_winner_broadcast(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and (await self.is_valid(group, message)):
+        if group and (await self.is_valid(group, message)) and group.master:
             if group.broadcast_winner:
                 group.broadcast_winner = False
                 self.update_group(group)
@@ -648,7 +692,7 @@ class VigilBot(object):
 
     async def handler_join(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and group.enabled:
+        if group and group.enabled and group.master:
             try:
                 timezone = message.text.split(' ', maxsplit=1)[1]
             except IndexError:
@@ -669,7 +713,7 @@ class VigilBot(object):
 
     async def handler_quit(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and group.enabled:
+        if group and group.enabled and group.master:
             user: VigilUser or None = group.get_user(message.from_user.id)
             if user:
                 del group.hall[message.from_user.id]
@@ -679,7 +723,7 @@ class VigilBot(object):
 
     async def handler_auto_join(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and group.enabled:
+        if group and group.enabled and group.master:
             user = group.get_user(message.from_user.id)
             if not user:
                 await self.handler_join(message)
@@ -703,7 +747,7 @@ class VigilBot(object):
 
     async def handler_disable_auto_join(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
-        if group and group.enabled:
+        if group and group.enabled and group.master:
             user: VigilUser or None = group.auto_join.get(message.from_user.id, None)
             if user:
                 del group.auto_join[user.id]
@@ -712,7 +756,7 @@ class VigilBot(object):
             await message.reply(self.strings.AUTO_JOIN_DISABLED)
 
     async def handler_time(self, message: types.Message):
-        group: VigilGroup or None = self.get_group(message.chat.id)
+        group: VigilGroup or None = self.get_group(message.chat.id, follow_redir=True)
         if (not group) or (not group.enabled):
             return
         user: VigilUser or None = group.get_user(message.from_user.id)
@@ -740,7 +784,7 @@ class VigilBot(object):
         await message.reply(response)
 
     async def handler_update_user(self, message: types.Message):
-        group: VigilGroup or None = self.get_group(message.chat.id)
+        group: VigilGroup or None = self.get_group(message.chat.id, follow_redir=True)
         if (not group) or (not group.enabled):
             return
         user: VigilUser or None = group.get_user(message.from_user.id)
@@ -763,6 +807,7 @@ class VigilBot(object):
             (['add_admin'], self.handler_add_admin),
             (['add_group'], self.handler_add_group),
             (['enable'], self.handler_enable),
+            (['slave'], self.handler_slave),
             (['disable'], self.handler_disable),
             (['group_status'], self.handler_group_status),
             (['current_timezone'], self.handler_current_timezone),
