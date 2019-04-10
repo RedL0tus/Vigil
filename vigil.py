@@ -433,7 +433,7 @@ class VigilBot(object):
                                 number=len(users)
                             )
                         )
-                    elif localized_time.hour == 23:
+                    elif (localized_time.hour == 23) and (localized_time.minute == 0):
                         await self.bot.send_message(
                             group.id,
                             self.strings.MATCH_GOING_TO_START_BROADCAST.format(
