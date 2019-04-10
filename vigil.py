@@ -802,6 +802,14 @@ class VigilBot(object):
         await self.handler_update_user(message)
         await message.reply(self.strings.I_AM_AWAKE_RESPONSE)
 
+    async def handler_stop(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if not group:
+            return
+        if await self.is_valid(group, message):
+            del self.data['groups'][group.id]
+            logger.info('Information deleted for group with ID "%s"' % group.id)
+
     def start(self):
         commands = [
             (['add_admin'], self.handler_add_admin),
@@ -828,7 +836,8 @@ class VigilBot(object):
             (['auto_join'], self.handler_auto_join),
             (['disable_auto_join'], self.handler_disable_auto_join),
             (['time'], self.handler_time),
-            (['imawake'], self.handler_imawake)
+            (['imawake'], self.handler_imawake),
+            (['stop'], self.handler_stop)
         ]
         for command in commands:
             self.dispatcher.register_message_handler(command[1], commands=command[0])
