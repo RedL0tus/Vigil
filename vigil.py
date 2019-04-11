@@ -34,6 +34,9 @@ class VigilStrings(object):
     是否启用冠军广播： {broadcast_winner_enabled}
     裁判模式： {mode}
     指定时间： {deadline}
+    开赛时间： {start_time} 点整
+    结束时间： {stop_time} 点整
+    是否延迟公布冠军到结束时间： {winner_broadcast_delay_enabled}
     '''  # 格式化歪打正着
     GROUP_STATUS_SLAVE: str = '''\
     群组 ID： {id}
@@ -45,9 +48,11 @@ class VigilStrings(object):
     STATUS_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区还有 {number} 人参赛'
     STATUS_EMPTY: str = '无人参赛，你们太弱了'
     MATCH_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的守夜大赛正式开始！共有 {number} 人参赛，祝各位武运昌隆（flag）！'
-    MATCH_GOING_TO_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的大赛将在一小时后开始，请各位选手做好准备！'
+    MATCH_GOING_TO_START_BROADCAST: str = '处于 {offset} offset 的 {timezone} 赛区的大赛将在一小时后开始，请各位选手做好准备！还未参赛的选手请速速报名！'
     BROADCAST_ENABLED: str = '已启用广播'
     BROADCAST_DISABLED: str = '已禁用广播'
+    WINNER_BROADCAST_DELAY_ENABLED: str = '冠军将于设定时间公布'
+    WINNER_BROADCAST_DELAY_DISABLED: str = '冠军将于决出时公布'
     TIMEZONE_CURRENT: str = '当前时区为 {timezone}'
     TIMEZONE_INVALID: str = '无效的时区'
     TIMEZONE_UPDATED: str = '时区已更新至 {timezone}'
@@ -60,12 +65,14 @@ class VigilStrings(object):
     MODE_INVALID: str = '不存在此模式'
     DEADLINE_UPDATED: str = '已更新至 {deadline}'
     DEADLINE_INVALID: str = '无效的时间，必须是个整数'
+    TIME_UPDATED: str = '已更新至 {time}'
+    TIME_INVALID: str = '无效的时间，必须是个整数'
     JOINED: str = '已加入 {timezone} 场次'
     MATCH_STARTED: str = '{timezone} 场次的比赛已经开始，请不要中途加入'
     QUIT: str = '已退出本届大赛'
     AUTO_JOIN_ENABLED: str = '已设置自动加入 {timezone} 场次'
     AUTO_JOIN_DISABLED: str = '已取消自动加入'
-    WINNER_FOUND: str = '本届大赛 {offset} offset 的赛区({timezone})的冠军是 {user} ，于当地时间 {time} 决出'
+    WINNER_FOUND: str = '本届大赛 {offset} offset 的赛区（{timezone}）的冠军是 {user} ，于当地时间 {time} 决出'
     INVALID_STRING: str = '草这什么鬼名字'
     TIME_RESPONSE: str = '{timezone} 赛区的时间为 {time}'
     I_AM_AWAKE_RESPONSE: str = '我活了'
@@ -130,6 +137,9 @@ class VigilGroup(yaml.YAMLObject):
             title_template: str = '椰树 {yeshu_year} 年第 {day} 届守夜大赛',
             mode: VigilMode = VigilMode(VigilMode.LAST),
             deadline: int = 6,
+            start_time: int = 0,
+            stop_time: int = 9,
+            delay_winner_broadcast: bool = False,
             broadcast_status: bool = False,
             broadcast_winner: bool = True
     ):
@@ -144,9 +154,38 @@ class VigilGroup(yaml.YAMLObject):
         self.hall: dict = dict()
         self.mode: VigilMode = mode
         self.deadline: int = deadline
+        self.start_time: int = start_time
+        self.stop_time: int = stop_time
+        self.delay_winner_broadcast: bool = delay_winner_broadcast
         self.winners: dict = dict()
-        self.broadcast_status = broadcast_status
-        self.broadcast_winner = broadcast_winner
+        self.broadcast_status: bool = broadcast_status
+        self.broadcast_winner: bool = broadcast_winner
+
+    def check_integrity(self):
+        default_values = {  # Default values
+            'enabled': False,
+            'master': True,
+            'slave_of': '0',
+            'timezone': 'Asia/Shanghai',
+            'title_enabled': False,
+            'title_template': '椰树 {yeshu_year} 年第 {day} 届守夜大赛',
+            'auto_join': dict(),
+            'hall': dict(),
+            'mode': VigilMode(VigilMode.LAST),
+            'deadline': 6,
+            'start_time': 0,
+            'stop_time': 9,
+            'delay_winner_broadcast': False,
+            'winners': dict(),
+            'broadcast_status': False,
+            'broadcast_winner': True
+        }
+        if 'id' not in self.__dict__.keys():
+            raise ValueError('Corrupted group data: WTF is this group?')  # Manual correction needed
+        for key in default_values.keys():
+            if key not in self.__dict__.keys():
+                logger.warning('Key "%s" not found for group "%s", applying default value' % (key, self.id))
+                self.__dict__[key] = default_values[key]
 
     def get_user(self, user_id) -> VigilUser or None:
         return self.hall.get(user_id, None)
@@ -196,7 +235,7 @@ class VigilGroup(yaml.YAMLObject):
                 elif localized_time.minute != 30:
                     continue
             if self.mode.mode == VigilMode.NO_ACTIVITY:
-                if localized_time.hour != 6:
+                if localized_time.hour != self.stop_time:
                     continue
                 elif localized_time.minute not in range(1):
                     continue
@@ -243,9 +282,9 @@ class VigilGroup(yaml.YAMLObject):
         for offset, (timezones, users) in users_in_matches.items():
             tz: pytz.timezone = pytz.timezone(timezones[0])
             localized_time: datetime = pytz.utc.localize(utc_time, is_dst=None).astimezone(tz)
-            if localized_time.hour > 7:
+            if localized_time.hour > (self.stop_time + 1):
                 continue
-            elif (localized_time.hour >= 0) and (localized_time.hour < 6):
+            elif (localized_time.hour >= self.start_time) and (localized_time.hour < self.stop_time):
                 if len(users) == 1:
                     self.update_winner(day_string, offset, VigilWinner(users[0], timezones))
                     del self.hall[users[0].id]
@@ -260,7 +299,7 @@ class VigilGroup(yaml.YAMLObject):
                     for timezone in timezones:
                         self.clean_up_hall(timezone)
             if self.mode.mode == VigilMode.NO_ACTIVITY:
-                if (localized_time.hour >= 0) and (localized_time.hour < 6):
+                if (localized_time.hour >= (self.start_time + 1)) and (localized_time.hour < self.stop_time):
                     remove_list: list = list()
                     for user in users:
                         if user.active_time[len(user.active_time) - 1] + timedelta(minutes=self.deadline) < utc_time:
@@ -291,6 +330,10 @@ class VigilBot(object):
             self.data = dict()
         if 'groups' not in self.data.keys():
             self.data['groups']: dict = dict()
+        for group in self.data['groups'].values():
+            logger.info('Inspecting group with ID "%s"' % group.id)
+            group.check_integrity()
+            self.data['groups'][group.id] = group
         if 'admins' not in self.data.keys():
             self.data['admins']: list = list()
         self.data['admins']: list = list(set(self.data['admins'] + admins))
@@ -398,7 +441,10 @@ class VigilBot(object):
                 if (not winner) or winner.broadcasted:
                     continue
                 tz: pytz.timezone = pytz.timezone(winner.timezones[0])
-                time: str = pytz.utc.localize(winner.last_online, is_dst=None).astimezone(tz).strftime('%H:%M')
+                localized_time: datetime = pytz.utc.localize(winner.last_online, is_dst=None).astimezone(tz)
+                time_string: str = localized_time.strftime('%H:%M')
+                if group.delay_winner_broadcast and (localized_time.hour != group.stop_time):
+                    continue
                 user: types.ChatMember = await self.bot.get_chat_member(group.id, winner.id)
                 user_name: str = user.user.first_name
                 user_name += ' ' + user.user.last_name if user.user.last_name else ''
@@ -407,7 +453,7 @@ class VigilBot(object):
                     offset=offset,
                     timezone=self.html_escape_for_the_damn_parser_of_telegram(', '.join(winner.timezones)),
                     user='<a href="tg://user?id=%s">%s</a>' % (user.user.id, user_name),
-                    time=time
+                    time=time_string
                 ) + '\n'
                 winner.broadcasted = True
                 group.update_winner(date, offset, winner)
@@ -424,7 +470,7 @@ class VigilBot(object):
                 if len(users) > 0:
                     tz: pytz.timezone = pytz.timezone(timezones[0])
                     localized_time: datetime = pytz.utc.localize(now, is_dst=None).astimezone(tz)
-                    if (localized_time.hour == 0) and (localized_time.minute == 0):
+                    if (localized_time.hour == group.start_time) and (localized_time.minute == 0):
                         await self.bot.send_message(
                             group.id,
                             self.strings.MATCH_START_BROADCAST.format(
@@ -433,7 +479,7 @@ class VigilBot(object):
                                 number=len(users)
                             )
                         )
-                    elif (localized_time.hour == 23) and (localized_time.minute == 0):
+                    elif (localized_time.hour == (group.start_time - 1)) and (localized_time.minute == 0):
                         await self.bot.send_message(
                             group.id,
                             self.strings.MATCH_GOING_TO_START_BROADCAST.format(
@@ -545,7 +591,10 @@ class VigilBot(object):
                 broadcast_status_enabled='是' if group.broadcast_status else '否',
                 broadcast_winner_enabled='是' if group.broadcast_winner else '否',
                 mode=mode,
-                deadline=str(group.deadline) + unit
+                deadline=str(group.deadline) + unit,
+                start_time=str(group.start_time),
+                stop_time=str(group.stop_time),
+                winner_broadcast_delay_enabled='是' if group.delay_winner_broadcast else '否',
             )
             await message.reply(response)
 
@@ -637,6 +686,60 @@ class VigilBot(object):
             self.update_group(group)
             logger.info('Mode updated to "%s" for group with ID "%s"' % (mode_string, group.id))
             await message.reply(self.strings.MODE_UPDATED.format(mode=mode_string))
+
+    async def handler_update_start_time(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and (await self.is_valid(group, message)) and group.master:
+            try:
+                start_time: int = int(message.text.split(' ', maxsplit=1)[1])
+                if start_time not in range(24):
+                    raise ValueError
+            except IndexError:
+                await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+                return
+            except ValueError:
+                await message.reply(self.strings.TIME_INVALID)
+                return
+            group.start_time = start_time
+            self.update_group(group)
+            logger.info('Start time of group "%s" has been updated to "%s"' % (group.id, start_time))
+            await message.reply(self.strings.TIME_UPDATED.format(time=start_time))
+
+    async def handler_update_stop_time(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and (await self.is_valid(group, message)) and group.master:
+            try:
+                stop_time: int = int(message.text.split(' ', maxsplit=1)[1])
+                if stop_time not in range(24):
+                    raise ValueError
+            except IndexError:
+                await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+                return
+            except ValueError:
+                await message.reply(self.strings.TIME_INVALID)
+                return
+            group.stop_time = stop_time
+            self.update_group(group)
+            logger.info('Start time of group "%s" has been updated to "%s"' % (group.id, stop_time))
+            await message.reply(self.strings.TIME_UPDATED.format(time=stop_time))
+
+    async def handler_enable_winner_broadcast_delay(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and (await self.is_valid(group, message)) and group.master:
+            if not group.delay_winner_broadcast:
+                group.delay_winner_broadcast = True
+                self.update_group(group)
+                logger.info('Broadcast delay enabled for group "%s"' % group.id)
+            await message.reply(self.strings.WINNER_BROADCAST_DELAY_ENABLED)
+
+    async def handler_disable_winner_broadcast_delay(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and (await self.is_valid(group, message)) and group.master:
+            if group.delay_winner_broadcast:
+                group.delay_winner_broadcast = False
+                self.update_group(group)
+                logger.info('Broadcast delay disabled for group "%s"' % group.id)
+            await message.reply(self.strings.WINNER_BROADCAST_DELAY_DISABLED)
 
     async def handler_update_deadline(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
@@ -826,10 +929,14 @@ class VigilBot(object):
             (['current_title_template'], self.handler_current_title_template),
             (['update_mode'], self.handler_update_mode),
             (['update_deadline'], self.handler_update_deadline),
+            (['update_start_time'], self.handler_update_start_time),
+            (['update_stop_time'], self.handler_update_stop_time),
             (['enable_broadcast', 'enable_status_broadcast'], self.handler_enable_status_broadcast),
             (['disable_broadcast', 'disable_status_broadcast'], self.handler_disable_status_broadcast),
             (['enable_winner_broadcast'], self.handler_enable_winner_broadcast),
             (['disable_winner_broadcast'], self.handler_disable_winner_broadcast),
+            (['enable_winner_broadcast_delay'], self.handler_enable_winner_broadcast_delay),
+            (['disable_winner_broadcast_delay'], self.handler_disable_winner_broadcast_delay),
             (['status', 'match_status'], self.handler_match_status),
             (['join'], self.handler_join),
             (['quit'], self.handler_quit),
