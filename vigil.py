@@ -54,7 +54,7 @@ class VigilStrings(object):
     WINNER_BROADCAST_DELAY_ENABLED: str = '冠军将于设定时间公布'
     WINNER_BROADCAST_DELAY_DISABLED: str = '冠军将于决出时公布'
     TIMEZONE_CURRENT: str = '当前时区为 {timezone}'
-    TIMEZONE_INVALID: str = '无效的时区'
+    TIMEZONE_INVALID: str = '无效的赛区'
     TIMEZONE_UPDATED: str = '时区已更新至 {timezone}'
     ADMIN_REQUIRED: str = '需要管理员权限'
     TITLE_ENABLED: str = '已启用自动修改群标题'
@@ -76,6 +76,8 @@ class VigilStrings(object):
     INVALID_STRING: str = '草这什么鬼名字'
     TIME_RESPONSE: str = '{timezone} 赛区的时间为 {time}'
     I_AM_AWAKE_RESPONSE: str = '我活了'
+    LIST_MEMBER: str = '"{name}"，属于 {timezone} 赛区'
+    MY_STATUS_MEMBER: str = '你在 {group_name} 群参加了 {timezone} 赛区的大赛'
 
 
 class VigilMode(yaml.YAMLObject):
@@ -886,6 +888,61 @@ class VigilBot(object):
         response += self.strings.TIME_RESPONSE.format(timezone='UTC', time=utc_time.strftime('%H:%M'))
         await message.reply(response)
 
+    async def handler_list(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if (not group) or (not group.enabled) or (not group.master):
+            return
+        try:
+            timezone: str = str(message.text.split(' ', maxsplit=1)[1])
+            if (len(timezone) != 5) and (timezone not in pytz.all_timezones):
+                raise ValueError
+        except IndexError:
+            timezone: str = ''
+        except ValueError:
+            await message.reply(self.strings.TIMEZONE_INVALID)
+            return
+        if not timezone:
+            all_users: dict = group.i_dont_know_how_to_name_this_method()
+            users_list: list = list()
+            for (_, users) in all_users.values():
+                users_list += users
+        elif timezone not in pytz.all_timezones:
+            all_users: dict = group.i_dont_know_how_to_name_this_method()
+            _, users_list = all_users.get(timezone, (None, None))
+        else:
+            users_list: list = group.find_user_with_timezone(group.hall, timezone)
+        if not users_list:
+            response = self.strings.STATUS_EMPTY
+        else:
+            response: str = ''
+            for user in users_list:
+                user_info: types.ChatMember = await self.bot.get_chat_member(group.id, user.id)
+                user_name: str = user_info.user.first_name
+                user_name += ' ' + user_info.user.last_name if user_info.user.last_name else ''
+                user_name = self.html_escape_for_the_damn_parser_of_telegram(user_name)
+                response += self.strings.LIST_MEMBER.format(name=user_name, timezone=user.timezone) + '\n'
+        if response:
+            await message.reply(response)
+
+    async def handler_my_status(self, message: types.Message):
+        if message.chat.id != message.from_user.id:
+            return
+        response: str = ''
+        for group in self.data['groups'].values():
+            if message.from_user.id not in group.hall.keys():
+                continue
+            group_info: types.Chat = await self.bot.get_chat(group.id)
+            if group_info.username:
+                group_name: str = '@%s' % group_info.username
+            else:
+                group_name: str = '“%s”' % group_info.title
+            response += self.strings.MY_STATUS_MEMBER.format(
+                group_name=group_name,
+                timezone=group.hall[message.from_user.id].timezone
+            )
+        if response:
+            await message.reply(response)
+
     async def handler_update_user(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id, follow_redir=True)
         if (not group) or (not group.enabled):
@@ -944,7 +1001,9 @@ class VigilBot(object):
             (['disable_auto_join'], self.handler_disable_auto_join),
             (['time'], self.handler_time),
             (['imawake'], self.handler_imawake),
-            (['stop'], self.handler_stop)
+            (['stop'], self.handler_stop),
+            (['list'], self.handler_list),
+            (['my_status'], self.handler_my_status)
         ]
         for command in commands:
             self.dispatcher.register_message_handler(command[1], commands=command[0])
