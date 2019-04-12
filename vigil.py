@@ -902,10 +902,7 @@ class VigilBot(object):
             await message.reply(self.strings.TIMEZONE_INVALID)
             return
         if not timezone:
-            all_users: dict = group.i_dont_know_how_to_name_this_method()
-            users_list: list = list()
-            for (_, users) in all_users.values():
-                users_list += users
+            users_list: list = list(group.hall.values())
         elif timezone not in pytz.all_timezones:
             all_users: dict = group.i_dont_know_how_to_name_this_method()
             _, users_list = all_users.get(timezone, (None, None))
