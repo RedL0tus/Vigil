@@ -487,6 +487,9 @@ class VigilBot(object):
                 if len(users) > 0:
                     tz: pytz.timezone = pytz.timezone(timezones[0])
                     localized_time: datetime = pytz.utc.localize(now, is_dst=None).astimezone(tz)
+                    prepare_time: int = group.start_time - 1
+                    if prepare_time < 0:
+                        prepare_time += 24
                     if (localized_time.hour == group.start_time) and (localized_time.minute == 0):
                         await self.bot.send_message(
                             group.id,
@@ -496,7 +499,7 @@ class VigilBot(object):
                                 number=len(users)
                             )
                         )
-                    elif (localized_time.hour == (group.start_time - 1)) and (localized_time.minute == 0):
+                    elif (localized_time.hour == prepare_time) and (localized_time.minute == 0):
                         await self.bot.send_message(
                             group.id,
                             self.strings.MATCH_GOING_TO_START_BROADCAST.format(
