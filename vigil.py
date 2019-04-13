@@ -382,6 +382,20 @@ class VigilBot(object):
             logger.info('Group with ID "%s" has been updated' % group.id)
             self.dump_data()
 
+    def hall_status(self, group) -> str or None:
+        content: str = ''
+        for offset, (timezones, users) in group.i_dont_know_how_to_name_this_method().items():
+            if len(users) > 0:
+                content += self.strings.STATUS_BROADCAST.format(
+                    offset=offset,
+                    timezone=', '.join(timezones),
+                    number=len(users)
+                ) + '\n'
+        if content != '':
+            return content
+        else:
+            return None
+
     async def is_admin(self, group: VigilGroup) -> bool:
         bot: types.ChatMember = await self.bot.get_chat_member(group.id, self.id)
         return bot.is_admin()
@@ -413,20 +427,6 @@ class VigilBot(object):
         for group in self.data['groups'].values():
             await self.update_title(group)
         logger.info('All titles have been updated')
-
-    def hall_status(self, group) -> str or None:
-        content: str = ''
-        for offset, (timezones, users) in group.i_dont_know_how_to_name_this_method().items():
-            if len(users) > 0:
-                content += self.strings.STATUS_BROADCAST.format(
-                    offset=offset,
-                    timezone=', '.join(timezones),
-                    number=len(users)
-                ) + '\n'
-        if content != '':
-            return content
-        else:
-            return None
 
     async def broadcast_winner(self):
         now = datetime.utcnow()
