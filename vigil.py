@@ -124,6 +124,14 @@ class VigilWinner(yaml.YAMLObject):
         self.broadcasted: bool = broadcasted
 
 
+class VigilChatMember(object):
+    def __init__(self, user: types.User):
+        self.id: int = user.id
+        self.name: str = user.full_name
+        self.username: str or None = user.username
+        self.record_time: datetime = datetime.utcnow()
+
+
 class VigilGroup(yaml.YAMLObject):
     yaml_loader: yaml.SafeLoader = yaml.SafeLoader
     yaml_dumper: yaml.SafeDumper = yaml.SafeDumper
@@ -340,6 +348,7 @@ class VigilBot(object):
             self.data['admins']: list = list()
         self.data['admins']: list = list(set(self.data['admins'] + admins))
         self.dump_data()
+        self.chat_members: dict = dict()
 
     def html_escape_for_the_damn_parser_of_telegram(self, text):
         try:
@@ -428,6 +437,14 @@ class VigilBot(object):
             await self.update_title(group)
         logger.info('All titles have been updated')
 
+    async def get_member_name(self, user_id: int, group_id: int) -> VigilChatMember:
+        if user_id not in self.chat_members.keys() or\
+                (self.chat_members[user_id].record_time + timedelta(hours=12) < datetime.utcnow()):
+            logger.info('No valid user information cache found for user "%s", fetching...' % user_id)
+            chat_member: types.ChatMember = await self.bot.get_chat_member(group_id, user_id)
+            self.chat_members[user_id]: VigilChatMember = VigilChatMember(chat_member.user)
+        return self.chat_members[user_id]
+
     async def broadcast_winner(self):
         now = datetime.utcnow()
         date: str = now.strftime('%Y/%m/%d')
@@ -447,14 +464,12 @@ class VigilBot(object):
                 time_string: str = localized_time.strftime('%H:%M')
                 if group.delay_winner_broadcast and (localized_time.hour != group.stop_time):
                     continue
-                user: types.ChatMember = await self.bot.get_chat_member(group.id, winner.id)
-                user_name: str = user.user.first_name
-                user_name += ' ' + user.user.last_name if user.user.last_name else ''
-                user_name = self.html_escape_for_the_damn_parser_of_telegram(user_name)
+                user: VigilChatMember = await self.get_member_name(winner.id, group.id)
+                user_name: str = self.html_escape_for_the_damn_parser_of_telegram(user.name)
                 result += self.strings.WINNER_FOUND.format(
                     offset=offset,
                     timezone=self.html_escape_for_the_damn_parser_of_telegram(', '.join(winner.timezones)),
-                    user='<a href="tg://user?id=%s">%s</a>' % (user.user.id, user_name),
+                    user='<a href="tg://user?id=%s">%s</a>' % (user.id, user_name),
                     time=time_string
                 ) + '\n'
                 winner.broadcasted = True
@@ -913,10 +928,8 @@ class VigilBot(object):
         else:
             response: str = ''
             for user in users_list:
-                user_info: types.ChatMember = await self.bot.get_chat_member(group.id, user.id)
-                user_name: str = user_info.user.first_name
-                user_name += ' ' + user_info.user.last_name if user_info.user.last_name else ''
-                user_name = self.html_escape_for_the_damn_parser_of_telegram(user_name)
+                user_info: VigilChatMember = await self.get_member_name(user.id, group.id)
+                user_name: str = self.html_escape_for_the_damn_parser_of_telegram(user_info.name)
                 response += self.strings.LIST_MEMBER.format(name=user_name, timezone=user.timezone) + '\n'
         if response:
             await message.reply(response)
@@ -947,6 +960,7 @@ class VigilBot(object):
         user: VigilUser or None = group.get_user(message.from_user.id)
         if not user:
             return
+        self.chat_members[user.id]: VigilChatMember = VigilChatMember(message.from_user)
         tz: pytz.timezone = pytz.timezone(user.timezone)
         localized_time: datetime = pytz.utc.localize(datetime.utcnow(), is_dst=None).astimezone(tz)
         start_time: int = group.start_time - group.deadline
