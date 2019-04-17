@@ -292,7 +292,7 @@ class VigilGroup(yaml.YAMLObject):
         for offset, (timezones, users) in users_in_matches.items():
             tz: pytz.timezone = pytz.timezone(timezones[0])
             localized_time: datetime = pytz.utc.localize(utc_time, is_dst=None).astimezone(tz)
-            if localized_time.hour > (self.stop_time + 1):
+            if localized_time.hour > ((self.stop_time + 1) % 24):
                 continue
             elif (localized_time.hour >= self.start_time) and (localized_time.hour < self.stop_time):
                 if len(users) == 1:
@@ -309,7 +309,7 @@ class VigilGroup(yaml.YAMLObject):
                     for timezone in timezones:
                         self.clean_up_hall(timezone)
             if self.mode.mode == VigilMode.NO_ACTIVITY:
-                if (localized_time.hour >= (self.start_time + 1)) and (localized_time.hour < self.stop_time):
+                if (localized_time.hour >= ((self.start_time + 1) % 24)) and (localized_time.hour < self.stop_time):
                     remove_list: list = list()
                     for user in users:
                         if user.active_time[len(user.active_time) - 1] + timedelta(minutes=self.deadline) < utc_time:
@@ -487,9 +487,7 @@ class VigilBot(object):
                 if len(users) > 0:
                     tz: pytz.timezone = pytz.timezone(timezones[0])
                     localized_time: datetime = pytz.utc.localize(now, is_dst=None).astimezone(tz)
-                    prepare_time: int = group.start_time - 1
-                    if prepare_time < 0:
-                        prepare_time += 24
+                    prepare_time: int = (24 + group.start_time - 1) % 24
                     if (localized_time.hour == group.start_time) and (localized_time.minute == 0):
                         await self.bot.send_message(
                             group.id,
@@ -825,7 +823,7 @@ class VigilBot(object):
                 return
             tz: pytz.timezone = pytz.timezone(timezone)
             localized_time: datetime = pytz.utc.localize(datetime.utcnow(), is_dst=None).astimezone(tz)
-            if (localized_time.hour < 6) and (localized_time.hour >= 0):
+            if (localized_time.hour < group.stop_time) or (localized_time.hour >= group.start_time):
                 await message.reply(self.strings.MATCH_STARTED.format(timezone=timezone))
                 return
             user = VigilUser(message.from_user.id, datetime.utcnow(), timezone=timezone)
@@ -966,9 +964,7 @@ class VigilBot(object):
         self.chat_members[user.id]: VigilChatMember = VigilChatMember(message.from_user)
         tz: pytz.timezone = pytz.timezone(user.timezone)
         localized_time: datetime = pytz.utc.localize(datetime.utcnow(), is_dst=None).astimezone(tz)
-        start_time: int = group.start_time - group.deadline
-        if start_time < 0:
-            start_time += 24
+        start_time: int = (24 + group.start_time - group.deadline) % 24
         if (localized_time.hour < group.stop_time) or (localized_time.hour >= start_time):
             user.active_time.append(datetime.utcnow())
             group.update_hall(user)
