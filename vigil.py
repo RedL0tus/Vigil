@@ -294,10 +294,16 @@ class VigilGroup(yaml.YAMLObject):
             localized_time: datetime = pytz.utc.localize(utc_time, is_dst=None).astimezone(tz)
             if localized_time.hour > ((self.stop_time + 1) % 24):
                 continue
-            elif (localized_time.hour >= self.start_time) and (localized_time.hour < self.stop_time):
-                if len(users) == 1:
-                    self.update_winner(day_string, offset, VigilWinner(users[0], timezones))
-                    del self.hall[users[0].id]
+            match_started: bool = False
+            if self.start_time > self.stop_time:
+                if (localized_time.hour >= self.start_time) or (localized_time.hour < self.stop_time):
+                    match_started = True
+            else:
+                if (localized_time.hour >= self.start_time) and (localized_time.hour < self.stop_time):
+                    match_started = True
+            if match_started and (len(users) == 1):
+                self.update_winner(day_string, offset, VigilWinner(users[0], timezones))
+                del self.hall[users[0].id]
             if (day_string in self.winners.keys()) and (offset in self.winners[day_string].keys()):
                 continue
             if self.mode.mode == VigilMode.LAST:
@@ -311,7 +317,7 @@ class VigilGroup(yaml.YAMLObject):
                     for timezone in timezones:
                         self.clean_up_hall(timezone)
             if self.mode.mode == VigilMode.NO_ACTIVITY:
-                if (localized_time.hour >= ((self.start_time + 1) % 24)) and (localized_time.hour < self.stop_time):
+                if match_started and (localized_time.hour >= ((self.start_time + 1) % 24)):
                     remove_list: list = list()
                     for user in users:
                         if user.active_time[len(user.active_time) - 1] + timedelta(minutes=self.deadline) < utc_time:
@@ -825,9 +831,14 @@ class VigilBot(object):
                 return
             tz: pytz.timezone = pytz.timezone(timezone)
             localized_time: datetime = pytz.utc.localize(datetime.utcnow(), is_dst=None).astimezone(tz)
-            if (localized_time.hour < group.stop_time) or (localized_time.hour >= group.start_time):
-                await message.reply(self.strings.MATCH_STARTED.format(timezone=timezone))
-                return
+            if group.start_time > group.stop_time:
+                if (localized_time.hour >= group.start_time) or (localized_time.hour < group.stop_time):
+                    await message.reply(self.strings.MATCH_STARTED.format(timezone=timezone))
+                    return
+            else:
+                if (localized_time.hour >= group.start_time) and (localized_time.hour < group.stop_time):
+                    await message.reply(self.strings.MATCH_STARTED.format(timezone=timezone))
+                    return
             user = VigilUser(message.from_user.id, datetime.utcnow(), timezone=timezone)
             group.update_hall(user)
             self.update_group(group)
