@@ -70,6 +70,7 @@ class VigilStrings(object):
     JOINED: str = '已加入 {timezone} 场次'
     MATCH_STARTED: str = '{timezone} 场次的比赛已经开始，请不要中途加入'
     QUIT: str = '已退出本届大赛'
+    KICKED: str = '"{username}" 已被请出本届大赛'
     AUTO_JOIN_ENABLED: str = '已设置自动加入 {timezone} 场次'
     AUTO_JOIN_DISABLED: str = '已取消自动加入'
     WINNER_FOUND: str = '本届大赛 {offset} offset 的赛区（{timezone}）的冠军是 {user} ，于当地时间 {time} 决出'
@@ -855,6 +856,25 @@ class VigilBot(object):
                 self.update_group(group)
             await message.reply(self.strings.QUIT)
 
+    async def handler_kick(self, message: types.Message):
+        group: VigilGroup or None = self.get_group(message.chat.id)
+        if group and group.enabled and group.master and (await self.is_valid(group, message)):
+            try:
+                user_id = int(message.text.split(' ', maxsplit=1)[1])
+            except IndexError:
+                await message.reply(self.strings.TOO_LESS_ARGUMENTS)
+                return
+            except ValueError:
+                await message.reply(self.strings.ID_INVALID)
+                return
+            user: VigilUser or None = group.get_user(user_id)
+            if user:
+                del group.hall[user.id]
+                logger.info('User with ID "%s" kicked' % user.id)
+                self.update_group(group)
+            user_name = await self.get_member_name(user_id, group.id)
+            await message.reply(self.strings.KICKED.format(username=user_name.name))
+
     async def handler_auto_join(self, message: types.Message):
         group: VigilGroup or None = self.get_group(message.chat.id)
         if group and group.enabled and group.master:
@@ -1023,6 +1043,7 @@ class VigilBot(object):
             (['status', 'match_status'], self.handler_match_status),
             (['join'], self.handler_join),
             (['quit'], self.handler_quit),
+            (['kick'], self.handler_kick),
             (['auto_join'], self.handler_auto_join),
             (['disable_auto_join'], self.handler_disable_auto_join),
             (['time'], self.handler_time),
