@@ -463,7 +463,7 @@ class VigilBot(object):
                     try:
                         del group.hall[user_id]
                         del group.auto_join[user_id]
-                    except IndexError:
+                    except KeyError:
                         pass
                 await asyncio.sleep(3) # Avoid banning
             self.update_group(group)
