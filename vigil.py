@@ -449,7 +449,7 @@ class VigilBot(object):
 
     async def maintain_user_list(self):
         for group in self.data['groups'].values():
-            for user_id in (group.hall.keys() + group.auto_join.keys()):
+            for user_id in (list(group.hall.keys()) + list(group.auto_join.keys())):
                 try:
                     chat_member: types.ChatMember = await self.bot.get_chat_member(group.id, user_id)
                     self.chat_members[user_id]: VigilChatMember = VigilChatMember(chat_member.user)
