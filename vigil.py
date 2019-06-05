@@ -127,10 +127,15 @@ class VigilWinner(yaml.YAMLObject):
 
 
 class VigilChatMember(object):
-    def __init__(self, user: types.User):
-        self.id: int = user.id
-        self.name: str = user.full_name
-        self.username: str or None = user.username
+    def __init__(self, user: types.User = None):
+        if user:
+            self.id: int = user.id
+            self.name: str = user.full_name
+            self.username: str or None = user.username
+        else:
+            self.id: int = 114514
+            self.name: str = "Unknown"
+            self.username: str or None = None
         self.record_time: datetime = datetime.utcnow()
 
 
@@ -470,7 +475,7 @@ class VigilBot(object):
             try:
                 chat_member: types.ChatMember = await self.bot.get_chat_member(group_id, user_id)
             except utils.exceptions.BadRequest:
-                return "Unknown"
+                return VigilChatMember()
             self.chat_members[user_id]: VigilChatMember = VigilChatMember(chat_member.user)
         return self.chat_members[user_id]
 
