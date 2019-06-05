@@ -6,7 +6,7 @@ import pytz
 import yaml
 import logging
 
-from aiogram import Bot, Dispatcher, executor, types
+from aiogram import Bot, Dispatcher, executor, types, utils
 from aiogram.types.message import ContentType
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -421,7 +421,10 @@ class VigilBot(object):
     async def is_valid(self, group: VigilGroup, message: types.Message) -> bool:
         if not group:
             return False
-        member: types.ChatMember = await self.bot.get_chat_member(group.id, message.from_user.id)
+        try:
+            member: types.ChatMember = await self.bot.get_chat_member(group.id, message.from_user.id)
+        except utils.exceptions.BadRequest:
+            return False
         return member.is_admin()
 
     async def update_title(self, group: VigilGroup):
@@ -446,11 +449,29 @@ class VigilBot(object):
             await self.update_title(group)
         logger.info('All titles have been updated')
 
+    async def maintain_user_list(self):
+        for group in self.data['groups'].values():
+            for user_id in (group.hall.keys() + group.auto_join.keys()):
+                try:
+                    chat_member: types.ChatMember = await self.bot.get_chat_member(group.id, user_id)
+                    self.chat_members[user_id]: VigilChatMember = VigilChatMember(chat_member.user)
+                except utils.exceptions.BadRequest:
+                    try:
+                        del group.hall[user_id]
+                        del group.auto_join[user_id]
+                    except IndexError:
+                        pass
+                await asyncio.sleep(3) # Avoid banning
+            self.update_group(group)
+
     async def get_member_name(self, user_id: int, group_id: int) -> VigilChatMember:
         if user_id not in self.chat_members.keys() or\
                 (self.chat_members[user_id].record_time + timedelta(hours=12) < datetime.utcnow()):
             logger.info('No valid user information cache found for user "%s", fetching...' % user_id)
-            chat_member: types.ChatMember = await self.bot.get_chat_member(group_id, user_id)
+            try:
+                chat_member: types.ChatMember = await self.bot.get_chat_member(group_id, user_id)
+            except utils.exceptions.BadRequest:
+                return "Unknown"
             self.chat_members[user_id]: VigilChatMember = VigilChatMember(chat_member.user)
         return self.chat_members[user_id]
 
@@ -1056,6 +1077,7 @@ class VigilBot(object):
             self.dispatcher.register_message_handler(command[1], commands=command[0])
             logger.info('Command "%s" registered' % command[0])
         self.dispatcher.register_message_handler(self.handler_update_user, content_types=ContentType.ANY)
+        self.scheduler.add_job(self.maintain_user_list, 'cron', hour='*/1', next_run_time=datetime.now())
         self.scheduler.add_job(self.update_title_all, 'cron', minute='*/30', next_run_time=datetime.now())
         self.scheduler.add_job(self.broadcast_winner, 'cron', minute='*/1', next_run_time=datetime.now())
         self.scheduler.add_job(self.broadcast_match_start, 'cron', minute='*/30')
