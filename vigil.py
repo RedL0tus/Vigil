@@ -305,8 +305,6 @@ class VigilGroup(yaml.YAMLObject):
             if match_started and (len(users) == 1):
                 self.update_winner(day_string, offset, VigilWinner(users[0], timezones))
                 del self.hall[users[0].id]
-            if (day_string in self.winners.keys()) and (offset in self.winners[day_string].keys()):
-                continue
             if self.mode.mode == VigilMode.LAST:
                 if self.deadline not in range(24):
                     continue
