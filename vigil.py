@@ -510,7 +510,7 @@ class VigilBot(object):
                 group.update_winner(date, offset, winner)
             self.update_group(group)
             if result and group.broadcast_winner:
-                await self.bot.send_message(group.id, result, parse_mode='HTML')
+                await self.bot.send_message(group.id, result, parse_mode='HTML', disable_notification=True)
 
     async def broadcast_match_start(self):
         now = datetime.utcnow()
